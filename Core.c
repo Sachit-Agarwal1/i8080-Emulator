@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <inttypes.h>
-#define CPU_DIAG
+//#define CPU_DIAG
 /* CPU Core Emulator for i8080 */
 /* Register Pairs:
 	B : B and C
@@ -17,7 +17,7 @@
 	P : Parity Bit
 */
 int cycleCount;
-
+#define CPU_DIAG
 uint8_t B;
 uint8_t C;
 uint8_t D;

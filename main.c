@@ -6,7 +6,7 @@
 FILE *file;
 extern uint8_t memory[65536];
 int main(int argc, char **argv) { 
-	file = fopen("programs/cpudiag.bin", "rb");
+	file = fopen(argv[1], "rb");
 	if (file == NULL){
 		perror("Failed: ");
 		return -1;
