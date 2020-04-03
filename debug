@@ -1,0 +1,2 @@
+break Core.c:145
+  condition $bpnum programCounter == 0x59C

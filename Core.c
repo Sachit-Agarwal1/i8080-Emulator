@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#define CPU_DIAG
 /* CPU Core Emulator for i8080 */
 /* Register Pairs:
 	B : B and C
@@ -24,8 +25,11 @@ uint8_t E;
 uint8_t H;
 uint8_t L;
 uint8_t A;
-
-uint16_t programCounter = 0;
+#ifdef CPU_DIAG
+uint16_t programCounter = 0x100;
+#else
+uint16_t programCounter = 0x000;
+#endif
 uint16_t stackPointer;
 bool isCPURunning;
 bool interruptsEnabled;
@@ -48,7 +52,7 @@ int parity(uint8_t byte)
 	y = y ^ (y >> 2);
 	y = y ^ (y >> 4);
 	y = y ^ (y >> 8);
-	return y & 1;
+	return !(y & 1);
 }
 
 static inline void MOV(uint8_t *dest, uint8_t *src) {
@@ -96,8 +100,9 @@ static inline void SUB(uint8_t *src){
 	cycleCount += 4;
 }
 static inline void SBB(uint8_t *src){
+	temp8 = A - (*src + carryFlag);
 	carryFlag = (*src + carryFlag) > A;
-	A = A - (*src + carryFlag);
+	A = temp8;
 	zeroFlag = (A==0);
 	parityFlag = parity(A);
 	signFlag = (A >> 7);
@@ -122,7 +127,7 @@ static inline void DCR(uint8_t *src){
 }
 static void inline CMP(uint8_t *src){
 	carryFlag = (*src > A);
-	temp8 = B - A;
+	temp8 = *src - A;
 	zeroFlag = (temp8 == 0);
 	parityFlag = parity(temp8);
 	signFlag = temp8 >> 7;
@@ -135,10 +140,13 @@ static inline uint16_t make16(uint8_t hiReg, uint8_t lowReg)
 }
 void tick()
 {
+	uint8_t opcode;
 	isCPURunning = true;
 	while (isCPURunning)
 	{
-		uint8_t opcode = memory[programCounter];
+		opcode = memory[programCounter];
+		printf("OPCODE:%x\n", opcode);
+		printf("Program Counter:%x\n", programCounter);
 		switch (opcode)
 		{
 		case 0x00:
@@ -150,7 +158,7 @@ void tick()
 			/*LXI B, D16*/
 			B = memory[programCounter + 2];
 			C = memory[programCounter + 1];
-			cycleCount += 7;
+			cycleCount += 10;
 			programCounter += 3;
 			break;
 		case 0x02:
@@ -228,7 +236,7 @@ void tick()
 		case 0x0F:
 			/*RRC CY*/
 			/*FLAGS: C*/
-			carryFlag = C & 0x01;
+			carryFlag = A & 0x01;
 			A = (A >> 1) | (carryFlag << 7);
 			programCounter++;
 			cycleCount += 4;
@@ -239,9 +247,9 @@ void tick()
 			break;
 		case 0x11:
 			/*LXI D, D16 - double check*/
-			E = memory[++programCounter];
-			D = memory[++programCounter];
-			programCounter++;
+			E = memory[programCounter+1];
+			D = memory[programCounter+2];
+			programCounter += 3;
 			cycleCount += 10;
 			break;
 		case 0x12:
@@ -320,8 +328,8 @@ void tick()
 			break;
 		case 0x1F:
 			/*RAR*/
-			temp8 = A > 1;
-			temp8 = temp8 & (carryFlag << 7);
+			temp8 = A >> 1;
+			temp8 = temp8 | (carryFlag << 7);
 			carryFlag = A & 1;
 			A = temp8;
 			cycleCount += 4;
@@ -330,13 +338,15 @@ void tick()
 		case 0x20:
 			/*NOP*/
 		case 0x21:
-			/*LXI H, d16 - double check*/
-			L = memory[programCounter++];
-			H = memory[programCounter++];
-			programCounter++;
+			/*LXI H, d16*/
+			L = memory[programCounter+1];
+			H = memory[programCounter+2];
+			programCounter += 3;
+			cycleCount += 10;
+			break;
 		case 0x22:
 			/*SHLD a16*/
-			temp16 = (memory[programCounter+1] << 8) | memory[programCounter];
+			temp16 = (memory[programCounter+2] << 8) | memory[programCounter+1];
 			memory[temp16] = L;
 			memory[temp16 + 1] = H;
 			programCounter = programCounter + 3;
@@ -367,9 +377,11 @@ void tick()
 			/*DAA*/
 			/*FLAGS: S Z AC P C*/
 			//unfinished
+			break;
 			;
 		case 0x28:
 			/*NOP*/
+			break;
 			;
 		case 0x29:
 			/*DAD H*/
@@ -384,11 +396,12 @@ void tick()
 			break;
 		case 0x2A:
 			/*LHLD a16*/
-			temp16 = (memory[programCounter+1] << 8) | memory[programCounter];
+			temp16 = (memory[programCounter+2] << 8) | memory[programCounter+1];
 			H = memory[temp16+1];
 			L = memory[temp16];
 			programCounter = programCounter + 3;
 			cycleCount += 16;
+			break;
 		case 0x2B:
 			/*DCX H*/
 			temp16 = (make16(H, L)) - 1;
@@ -418,8 +431,12 @@ void tick()
 			break;
 		case 0x30:
 			/*dummy OP*/
-			/*print A*/
-			printf("Accumulator Value: %"PRIu8"\n", A);
+			/*dump processor state*/
+			printf("Accumulator Value: %x\n", A);
+			printf("B and C Values: %x %x\n", B, C);
+			printf("D and E Values: %x %x\n", D, E);
+			printf("H and L Values: %x %x\n", H, L);
+			printf("Carry:%d\nSign:%d\nZero:%d\nParity:%d\n", carryFlag, signFlag, zeroFlag, parityFlag);
 			cycleCount += 4;
 			programCounter += 1;
 			break;
@@ -427,6 +444,8 @@ void tick()
 			/*LXI SP, d16*/
 			stackPointer = (memory[programCounter + 2] << 8) | memory[programCounter+1];
 			programCounter = programCounter + 3;
+			cycleCount += 10;
+			break;
 		case 0x32:
 			/*STA a16*/
 			temp16 = (memory[programCounter+2] << 8) | memory[programCounter+1];
@@ -503,15 +522,12 @@ void tick()
 		case 0x3D:
 			/*DCR A*/
 			/*FLAGS: S Z AC P*/
-			A--;
-			signFlag = (A >> 7);
-			zeroFlag = (A == 0);
-			parityFlag = parity(A);
-			programCounter++;
+			DCR(&A);
+			break;
 		case 0x3E:
 			/*MVI A, d8*/
-			A = memory[++programCounter];
-			programCounter++;
+			MVI(&A);
+			break;
 		case 0x3F:
 			/*CMC*/
 			/*FLAGS: C*/
@@ -701,6 +717,8 @@ void tick()
 			temp16 = make16(H, L);
 			memory[temp16] = C;
 			programCounter++;
+			cycleCount += 7;
+			break;
 		case 0x72:
 			/*MOV M, D*/
 			temp16 = make16(H, L);
@@ -740,6 +758,8 @@ void tick()
 			temp16 = make16(H, L);
 			memory[temp16] = A;
 			programCounter++;
+			cycleCount += 7;
+			break;
 		case 0x78:
 			MOV(&A, &B);
 			break;
@@ -763,6 +783,8 @@ void tick()
 			temp16 = make16(H, L);
 			A = memory[temp16];
 			programCounter++;
+			cycleCount += 7;
+			break;
 		case 0x7F:
 			MOV(&A, &A);
 			break;
@@ -1021,7 +1043,7 @@ void tick()
 		case 0xA8:
 			/*XRA B*/
 			/*FLAGS: S Z AC P C*/
-			A = A ^ E;
+			A = A ^ B;
 			carryFlag = 0;
 			zeroFlag = (A == 0);
 			parityFlag = parity(A);
@@ -1175,7 +1197,7 @@ void tick()
 		case 0xB6:
 			/*ORA M*/
 			/*FLAGS: S Z AC P C*/
-			A = C | memory[make16(H, L)];
+			A = A | memory[make16(H, L)];
 			carryFlag = 0;
 			zeroFlag = (A == 0);
 			parityFlag = parity(A);
@@ -1230,6 +1252,8 @@ void tick()
 			carryFlag = 0;
 			signFlag = 0;
 			parityFlag = 0;
+			cycleCount = 4;
+			break;
 		case 0xC0:
 			/*RNZ*/
 			if (!zeroFlag){
@@ -1292,7 +1316,7 @@ void tick()
 			/*ADI*/
 			/*FLAGS: S Z AC P C*/
 			temp16 = A + memory[programCounter + 1];
-			A = temp16 | 0xFF;
+			A = temp16 & 0xFF;
 			signFlag = A >> 7;
 			zeroFlag = (A == 0);
 			parityFlag = parity(A);
@@ -1366,7 +1390,7 @@ void tick()
 		case 0xCE:
 			/*ACI d8*/
 			temp16 = A + memory[programCounter+1] + carryFlag;
-			A = temp16 | 0xFF;
+			A = temp16 & 0xFF;
 			zeroFlag = (A == 0);
 			signFlag = A >> 7;
 			parityFlag = parity(A);
@@ -1451,6 +1475,7 @@ void tick()
 			parityFlag = parity(A);
 			programCounter += 2;
 			cycleCount += 7;
+			break;
 		case 0xD7:
 			/*RST 2*/
 			memory[stackPointer - 1] = (programCounter+1) >> 8;
@@ -1462,7 +1487,7 @@ void tick()
 		case 0xD8:
 			/*RC*/
 			if (carryFlag){
-				programCounter = make16(memory[stackPointer + 2], memory[stackPointer]);
+				programCounter = make16(memory[stackPointer + 1], memory[stackPointer]);
 				stackPointer = stackPointer + 2;
 				cycleCount += 11;
 			}
@@ -1475,6 +1500,8 @@ void tick()
 			/* *RET */
 			programCounter = make16(memory[stackPointer + 1], memory[stackPointer]);
 			stackPointer = stackPointer + 2;
+			cycleCount += 10;
+			break;
 		case 0xDA:
 			/*JC a16*/
 			if (carryFlag){
@@ -1510,6 +1537,8 @@ void tick()
 			memory[stackPointer - 2] = programCounter & 255;
 			stackPointer = stackPointer - 2;
 			programCounter = make16(memory[programCounter+2], memory[programCounter+1]);
+			cycleCount += 17;
+			break;
 		case 0xDE:
 			/*SBI d8 TODO*/
 			SBB(&memory[programCounter + 1]);
@@ -1664,6 +1693,8 @@ void tick()
 			memory[stackPointer - 2] = programCounter & 255;
 			stackPointer = stackPointer - 2;
 			programCounter = make16(memory[programCounter+2], memory[programCounter+1]);
+			cycleCount += 17;
+			break;
 		case 0xEE:
 			/*XRI d8*/
 			A = A ^ memory[programCounter + 1];
@@ -1704,7 +1735,7 @@ void tick()
 			zeroFlag = (temp8 & 0b1000000) >> 6;
 			signFlag = (temp8 & 0b10000000) >> 7;
 			cycleCount += 10;
-			programCounter += 10;
+			programCounter += 1;
 			stackPointer += 2;
 			break;
 		case 0xF2:
@@ -1837,7 +1868,7 @@ void tick()
 			programCounter = 56;
 			cycleCount += 11;
 			break;
-		default: printf("Unimplemented OPCODE");
+		default: printf("Unimplemented OPCODE"); return;
 	}
 }	
 }
